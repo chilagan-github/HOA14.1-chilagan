@@ -1,0 +1,134 @@
+---
+- name: Install Keystone (Identity Service) on Controller (Ubuntu)
+  hosts: controller
+  become: true
+  vars_files:
+    - controller.yml
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install Keystone packages
+      apt:
+        name:
+          - keystone
+          - apache2
+          - libapache2-mod-wsgi-py3
+        state: present
+
+    - name: Create Keystone database
+      mysql_db:
+        name: keystone
+        state: present
+
+    - name: Grant privileges to Keystone user
+      mysql_user:
+        name: keystone
+        password: "{{ keystone_db_password }}"
+        host: "localhost"
+        priv: "keystone.*:ALL"
+        state: present
+
+    - name: Grant privileges to Keystone user for remote access
+      mysql_user:
+        name: keystone
+        password: "{{ keystone_db_password }}"
+        host: "%"
+        priv: "keystone.*:ALL"
+        state: present
+
+    - name: Populate the Keystone database
+      shell: |
+        keystone-manage db_sync
+
+    - name: Initialize Fernet keys for Keystone
+      shell: |
+        keystone-manage fernet_setup --keystone-user keystone --keystone-group keystone
+        keystone-manage credential_setup --keystone-user keystone --keystone-group keystone
+
+    - name: Bootstrap Keystone
+      shell: |
+        keystone-manage bootstrap --bootstrap-password {{ keystone_admin_password }} \
+          --bootstrap-admin-url http://{{ controller_ip }}:5000/v3/ \
+          --bootstrap-internal-url http://{{ controller_ip }}:5000/v3/ \
+          --bootstrap-public-url http://{{ controller_ip }}:5000/v3/ \
+          --bootstrap-region-id RegionOne
+
+- name: Install Glance (Image Service) on Controller (Ubuntu)
+  hosts: controller
+  become: true
+  vars_files:
+    - controller.yml
+  tasks:
+    - name: Install Glance packages
+      apt:
+        name:
+          - glance
+        state: present
+
+    - name: Create Glance database
+      mysql_db:
+        name: glance
+        state: present
+
+    - name: Grant privileges to Glance user
+      mysql_user:
+        name: glance
+        password: "{{ glance_db_password }}"
+        host: "localhost"
+        priv: "glance.*:ALL"
+        state: present
+
+    - name: Grant privileges to Glance user for remote access
+      mysql_user:
+        name: glance
+        password: "{{ glance_db_password }}"
+        host: "%"
+        priv: "glance.*:ALL"
+        state: present
+
+    - name: Populate the Glance database
+      shell: |
+        glance-manage db_sync
+
+    - name: Start and enable Glance services
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - glance-api
+
+- name: Install Nova (Compute Service) on Compute Node (CentOS 9)
+  hosts: compute
+  become: true
+  vars_files:
+    - compute.yml
+  tasks:
+    - name: Install OpenStack repository
+      dnf:
+        name: centos-release-openstack-zed 
+        state: present
+
+    - name: Install Nova Compute packages
+      dnf:
+        name:
+          - openstack-nova-compute
+        state: present
+
+    - name: Configure Nova Compute
+      lineinfile:
+        path: /etc/nova/nova.conf
+        regexp: "^{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: "^my_ip", line: "my_ip = {{ ansible_host }}" }
+        - { regexp: "^auth_strategy", line: "auth_strategy = keystone" }
+
+    - name: Start and enable Nova Compute service
+      systemd:
+        name: openstack-nova-compute
+        state: started
+        enabled: true
+

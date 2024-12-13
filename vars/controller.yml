@@ -1,0 +1,6 @@
+mysql_root_password: "correct_root_password"
+keystone_db_password: "keystone_password"
+glance_db_password: "glance_password"
+controller_ip: "192.168.56.102"
+keystone_admin_password: "admin_password"
+
